@@ -1,0 +1,76 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+samples = [f"sample{i}" for i in range(1, 11)]
+
+rule all:
+    input:
+        counts = expand("results/counts/{sample}.txt", sample=samples),
+        plot = "results/plots/read_counts.png"
+
+rule bwa_index:
+    input:
+        "data/genome/wmel.fna.gz"
+    output:
+        "data/genome/wmel.fna.gz.amb",
+        "data/genome/wmel.fna.gz.ann",
+        "data/genome/wmel.fna.gz.bwt",
+        "data/genome/wmel.fna.gz.pac",
+        "data/genome/wmel.fna.gz.sa"
+    conda: "envs/bwa.yaml"
+    shell:
+        """
+        bwa index {input}
+        """
+
+rule bwa_mem:
+    input:
+        r1 = "data/reads/{sample}_R1.fastq.gz",
+        r2 = "data/reads/{sample}_R2.fastq.gz",
+        ref = "data/genome/wmel.fna.gz",
+        ref_index = expand("data/genome/wmel.fna.gz.{ext}", ext=["amb", "ann", "bwt", "pac", "sa"])
+    output:
+        "results/alignments/{sample}.sam"
+    conda: "envs/bwa.yaml"
+    threads: 4
+    shell:
+        "bwa mem -M -t {threads} {input.ref} {input.r1} {input.r2} > {output}"
+
+rule count_reads:
+    input:
+        rules.bwa_mem.output
+    output:
+        "results/counts/{sample}.txt"
+    shell:
+        "wc -l {input} > {output}"
+
+rule aggregate_counts:
+    input:
+        expand("results/counts/{sample}.txt", sample=samples)
+    output:
+        "results/plots/read_counts.csv"
+    run:
+        counts = []
+        for sample in samples:
+            with open(f"results/counts/{sample}.txt") as f:
+                count = int(f.read().strip().split()[0])
+                counts.append((sample, count))
+        df = pd.DataFrame(counts, columns=["Sample", "Count"])
+        df.to_csv(output[0], index=False)
+
+rule plot_counts:
+    input:
+        "results/plots/read_counts.csv"
+    output:
+        "results/plots/read_counts.png"
+    run:
+        df = pd.read_csv(input[0])
+        plt.figure(figsize=(10, 6))
+        plt.bar(df["Sample"], df["Count"], color='skyblue')
+        plt.xlabel('Sample')
+        plt.ylabel('Number of Reads')
+        plt.title('Read Counts per Sample')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig(output[0])
+
